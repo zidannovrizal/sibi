@@ -1,0 +1,44 @@
+name: bima_flutter
+description: "A new Flutter project."
+publish_to: "none"
+version: 1.0.0+1
+
+environment:
+  sdk: ">=3.2.3 <4.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+  camera: ^0.11.3
+  permission_handler: ^11.3.1
+  provider: ^6.1.2
+  image: ^4.1.7
+  cupertino_icons: ^1.0.2
+  # HTTP client for Python server communication
+  http: ^1.1.0
+  # Production-ready hand detection with Google ML Kit Face Detection
+  # google_ml_kit: ^0.17.0
+  # google_mlkit_face_detection: ^0.10.1
+  tflite_flutter: ^0.11.0
+  google_mlkit_pose_detection: ^0.14.0
+  archive: ^3.5.1
+  movenet_hands_bridge:
+    path: ../movenet_hands_bridge
+  json_annotation: ^4.9.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^3.0.0
+
+flutter:
+  uses-material-design: true
+  # assets:
+  #   - assets/models/
+  assets:
+    - assets/currently_use/sibi_compact_mlp.tflite
+    - assets/currently_use/sibi_compact_labels.json
+    - assets/currently_use/compact_scaler.json
+    - assets/currently_use/movenet_thunder.tflite
+    - assets/currently_use/movenet_thunder_float3.tflite
+    - assets/currently_use/hand_landmarker.task

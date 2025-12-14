@@ -39,6 +39,10 @@ class CameraProvider extends ChangeNotifier {
   DateTime? _lastFrameAt;
   bool _useRemoteServer = false;
   bool _isRecordingSegment = false;
+  bool _segmentLoopCancelled = false;
+  bool _isSwitchingCamera = false;
+  Completer<void>? _segmentLoopCompleter;
+  DateTime? _lastSwitchAt;
   WebSocketChannel? _wsChannel;
   StreamSubscription? _wsSubscription;
   String _lastServerUrl = '';
@@ -262,6 +266,14 @@ class CameraProvider extends ChangeNotifier {
     }
     final bool wasRemote = _useRemoteServer;
 
+    // Minta loop segmen berhenti secepat mungkin.
+    _segmentLoopCancelled = true;
+    _isRecordingSegment = false;
+    if (_segmentLoopCompleter != null && !_segmentLoopCompleter!.isCompleted) {
+      await _segmentLoopCompleter!.future
+          .timeout(const Duration(milliseconds: 800), onTimeout: () {});
+    }
+
     try {
       if (_controller!.value.isStreamingImages) {
         await _controller!.stopImageStream();
@@ -298,34 +310,62 @@ class CameraProvider extends ChangeNotifier {
       debugPrint('Only one camera available.');
       return;
     }
+    if (_isSwitchingCamera) {
+      debugPrint('Switch camera skipped: already in progress.');
+      return;
+    }
+    final now = DateTime.now();
+    if (_lastSwitchAt != null &&
+        now.difference(_lastSwitchAt!) < const Duration(seconds: 1)) {
+      debugPrint('Switch camera skipped: cooldown 1s.');
+      return;
+    }
+    _isSwitchingCamera = true;
 
-    final bool wasActive = _isCameraActive;
-    final bool wasRemote = _useRemoteServer;
-    final String serverUrl = _lastServerUrl;
+    try {
+      await _waitSegmentLoopStopped();
+      final bool wasActive = _isCameraActive;
+      final bool wasRemote = _useRemoteServer;
+      final String serverUrl = _lastServerUrl;
 
-    // Putuskan koneksi WS agar saat switch dibuat koneksi baru yang bersih.
-    await stopCamera(preserveMode: false, disconnectWs: true);
-    await _controller?.dispose();
+      // Putuskan koneksi WS agar saat switch dibuat koneksi baru yang bersih.
+      await stopCamera(preserveMode: false, disconnectWs: true);
+      await _controller?.dispose();
 
-    _currentCameraIndex = (_currentCameraIndex + 1) % _cameras.length;
-    _isInitialized = false;
-    _isFlashOn = false;
+      _currentCameraIndex = (_currentCameraIndex + 1) % _cameras.length;
+      _isInitialized = false;
+      _isFlashOn = false;
+      _segmentLoopCancelled = true;
+      _isRecordingSegment = false;
 
-    await initializeCamera(keepCurrentIndex: true);
-    await _prepareForRecording();
-    _isRecordingSegment = false;
-    notifyListeners();
+      await initializeCamera(keepCurrentIndex: true);
+      await _prepareForRecording();
+      _isRecordingSegment = false;
+      notifyListeners();
 
-    if (wasActive) {
-      if (wasRemote && serverUrl.trim().isNotEmpty) {
-        final started = await startRemoteCamera(serverUrl);
-        if (!started) {
+      if (wasActive) {
+        if (wasRemote && serverUrl.trim().isNotEmpty) {
+          final started = await startRemoteCamera(serverUrl);
+          if (!started) {
+            await startCamera();
+          }
+        } else {
           await startCamera();
         }
-      } else {
-        await startCamera();
       }
+    } finally {
+      _isSwitchingCamera = false;
+      _lastSwitchAt = DateTime.now();
     }
+  }
+
+  Future<void> _waitSegmentLoopStopped() async {
+    _segmentLoopCancelled = true;
+    if (_segmentLoopCompleter != null && !_segmentLoopCompleter!.isCompleted) {
+      await _segmentLoopCompleter!.future
+          .timeout(const Duration(milliseconds: 800), onTimeout: () {});
+    }
+    _isRecordingSegment = false;
   }
 
   Future<void> toggleFlash() async {
@@ -368,6 +408,7 @@ class CameraProvider extends ChangeNotifier {
     }
 
     try {
+      await _waitSegmentLoopStopped();
       if (_isCameraActive) {
         await stopCamera(preserveMode: false, disconnectWs: true);
       } else {
@@ -653,12 +694,20 @@ class CameraProvider extends ChangeNotifier {
     if (_controller == null) return;
     if (_isRecordingSegment) return;
     _isRecordingSegment = true;
+    _segmentLoopCancelled = false;
+    _segmentLoopCompleter = Completer<void>();
     int emptyStreak = 0;
 
     () async {
       debugPrint('#remote segment loop started');
-      while (_isCameraActive && _useRemoteServer && _wsChannel != null) {
+      while (_isCameraActive &&
+          _useRemoteServer &&
+          _wsChannel != null &&
+          !_segmentLoopCancelled) {
         try {
+          if (_segmentLoopCancelled) {
+            break;
+          }
           if (_controller == null || !_controller!.value.isInitialized) {
             debugPrint('#remote controller not ready, break loop');
             break;
@@ -672,6 +721,12 @@ class CameraProvider extends ChangeNotifier {
           await Future.delayed(const Duration(milliseconds: 250));
           await _prepareForRecording();
           debugPrint('#remote start video recording');
+          if (_segmentLoopCancelled ||
+              _controller == null ||
+              !_controller!.value.isInitialized ||
+              _controller!.value.isRecordingVideo) {
+            break;
+          }
           await _controller!.startVideoRecording();
           await Future.delayed(const Duration(milliseconds: 1600));
           final XFile file = await _controller!.stopVideoRecording();
@@ -703,8 +758,12 @@ class CameraProvider extends ChangeNotifier {
       }
       debugPrint('#remote segment loop stopped');
       _isRecordingSegment = false;
+      _segmentLoopCompleter?.complete();
       // Jika masih dalam mode remote dan koneksi ada, coba restart loop.
-      if (_isCameraActive && _useRemoteServer && _wsChannel != null) {
+      if (_isCameraActive &&
+          _useRemoteServer &&
+          _wsChannel != null &&
+          !_segmentLoopCancelled) {
         Future.microtask(_startSegmentLoop);
       }
     }();

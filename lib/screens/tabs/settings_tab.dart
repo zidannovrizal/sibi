@@ -20,28 +20,98 @@ class SettingsTab extends StatelessWidget {
       final modeLabel = nextValue ? 'Online' : 'Offline';
       return await showDialog<bool>(
             context: ctx,
-            builder: (context) => AlertDialog(
-              title: Text('Ganti ke Mode $modeLabel?'),
-              content: Text(
-                nextValue
-                    ? 'Mode Online akan memproses di server dan memakai koneksi internet.'
-                    : 'Mode Offline akan memproses di perangkat. Pastikan model lokal siap.',
-              ),
-              actions: [
-                TextButton(
-                  onPressed: () => Navigator.of(context).pop(false),
-                  child: const Text('Batal'),
+            barrierColor: Colors.black.withOpacity(0.35),
+            builder: (context) {
+              return Dialog(
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(20),
                 ),
-                ElevatedButton(
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: AppColors.primary,
-                    foregroundColor: Colors.white,
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(20, 18, 20, 16),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          Container(
+                            width: 44,
+                            height: 44,
+                            decoration: BoxDecoration(
+                              gradient: const LinearGradient(
+                                colors: [AppColors.primary, AppColors.primarySoft],
+                              ),
+                              borderRadius: BorderRadius.circular(14),
+                            ),
+                            child: const Icon(
+                              Icons.cloud_sync_rounded,
+                              color: Colors.white,
+                            ),
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  'Ganti ke Mode $modeLabel',
+                                  style: const TextStyle(
+                                    fontSize: 18,
+                                    fontWeight: FontWeight.w800,
+                                  ),
+                                ),
+                                const SizedBox(height: 4),
+                                Text(
+                                  nextValue
+                                      ? 'Online: kirim segmen ke server + GPT.'
+                                      : 'Offline: pemrosesan lokal, lebih hemat data.',
+                                  style: TextStyle(
+                                    fontSize: 13,
+                                    color: onSurface.withOpacity(0.7),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 18),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: OutlinedButton(
+                              style: OutlinedButton.styleFrom(
+                                padding: const EdgeInsets.symmetric(vertical: 12),
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(12),
+                                ),
+                              ),
+                              onPressed: () => Navigator.of(context).pop(false),
+                              child: const Text('Batal'),
+                            ),
+                          ),
+                          const SizedBox(width: 10),
+                          Expanded(
+                            child: ElevatedButton(
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: AppColors.primary,
+                                foregroundColor: Colors.white,
+                                padding: const EdgeInsets.symmetric(vertical: 12),
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(12),
+                                ),
+                              ),
+                              onPressed: () => Navigator.of(context).pop(true),
+                              child: const Text('Ganti'),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
                   ),
-                  onPressed: () => Navigator.of(context).pop(true),
-                  child: const Text('Ya, ganti'),
                 ),
-              ],
-            ),
+              );
+            },
           ) ??
           false;
     }

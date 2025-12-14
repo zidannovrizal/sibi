@@ -447,7 +447,7 @@ class _CameraWidgetState extends State<CameraWidget> {
               child: Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  Icon(
+                  const Icon(
                     Icons.check_circle_rounded,
                     size: 18,
                     color: Colors.white,
@@ -455,11 +455,12 @@ class _CameraWidgetState extends State<CameraWidget> {
                   const SizedBox(width: 8),
                   Text(
                     '${(cameraProvider.confidence * 100).toStringAsFixed(1)}%',
-                    style: TextStyle(
+                    style: const TextStyle(
                       color: Colors.white,
                       fontSize: 13,
                       fontWeight: FontWeight.w700,
                       letterSpacing: 0.2,
+                      decoration: TextDecoration.none,
                     ),
                   ),
                 ],

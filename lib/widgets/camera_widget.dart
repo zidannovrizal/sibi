@@ -1,7 +1,9 @@
+import 'package:camera/camera.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-import 'package:camera/camera.dart';
+
 import '../providers/camera_provider.dart';
+import '../providers/server_config_provider.dart';
 
 class CameraWidget extends StatefulWidget {
   const CameraWidget({super.key});
@@ -21,12 +23,43 @@ class _CameraWidgetState extends State<CameraWidget> {
     return text;
   }
 
+  Widget _buildModeBadge(CameraProvider provider) {
+    final bool online = provider.useRemote;
+    final Color bg = online ? const Color(0xFF2ECC71) : const Color(0xFF95A5A6);
+    final String text = online ? 'Online • GPT-5-mini' : 'Offline • Lokal';
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+      decoration: BoxDecoration(
+        color: bg,
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Text(
+        text,
+        style: const TextStyle(
+          color: Colors.white,
+          fontSize: 12,
+          fontWeight: FontWeight.w700,
+          decoration: TextDecoration.none,
+        ),
+      ),
+    );
+  }
+
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addPostFrameCallback((_) async {
       _cameraProvider = context.read<CameraProvider>();
-      await _initializeAndStartCamera();
+      final serverConfig = context.read<ServerConfigProvider>();
+      final serverUrl = serverConfig.serverUrl.trim();
+      bool startedRemotely = false;
+      if (serverConfig.useRemote && serverUrl.isNotEmpty) {
+        startedRemotely =
+            await _cameraProvider!.startRemoteCamera(serverUrl);
+      }
+      if (!startedRemotely) {
+        await _initializeAndStartCamera();
+      }
       _cameraProvider!.ensureModelFeatureTesterInitialized();
     });
   }
@@ -90,6 +123,34 @@ class _CameraWidgetState extends State<CameraWidget> {
                 ),
 
               // Camera controls at top right
+              if (cameraProvider.isInitialized &&
+                  cameraProvider.controller != null)
+                Positioned(
+                  top: 60,
+                  left: 20,
+                  child: Container(
+                    decoration: BoxDecoration(
+                      color: Colors.black.withOpacity(0.6),
+                      borderRadius: BorderRadius.circular(25),
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.black.withOpacity(0.3),
+                          blurRadius: 10,
+                          offset: const Offset(0, 4),
+                        ),
+                      ],
+                    ),
+                    child: IconButton(
+                      onPressed: () => Navigator.of(context).pop(),
+                      icon: const Icon(
+                        Icons.chevron_left,
+                        color: Colors.white,
+                        size: 28,
+                      ),
+                    ),
+                  ),
+                ),
+
               if (cameraProvider.isInitialized &&
                   cameraProvider.controller != null)
                 Positioned(
@@ -207,6 +268,7 @@ class _CameraWidgetState extends State<CameraWidget> {
                   fontSize: 16,
                   fontWeight: FontWeight.w600,
                   color: Color(0xFF1A1A2E),
+                  decoration: TextDecoration.none,
                 ),
               ),
             ],
@@ -226,9 +288,12 @@ class _CameraWidgetState extends State<CameraWidget> {
                     fontWeight: FontWeight.bold,
                     color: Color(0xFF1A1A2E),
                     letterSpacing: 0.5,
+                    decoration: TextDecoration.none,
                   ),
                   textAlign: TextAlign.center,
                 ),
+                const SizedBox(height: 10),
+                _buildModeBadge(cameraProvider),
                 const SizedBox(height: 8),
                 Row(
                   mainAxisAlignment: MainAxisAlignment.center,
@@ -245,6 +310,7 @@ class _CameraWidgetState extends State<CameraWidget> {
                         fontSize: 12,
                         color: Colors.grey[600],
                         fontWeight: FontWeight.w500,
+                        decoration: TextDecoration.none,
                       ),
                     ),
                   ],
@@ -266,6 +332,7 @@ class _CameraWidgetState extends State<CameraWidget> {
                     fontWeight: FontWeight.w500,
                     color: Color(0xFF666666),
                     fontStyle: FontStyle.italic,
+                    decoration: TextDecoration.none,
                   ),
                   textAlign: TextAlign.center,
                 ),
@@ -286,6 +353,7 @@ class _CameraWidgetState extends State<CameraWidget> {
                     fontSize: 16,
                     fontWeight: FontWeight.w500,
                     color: Color(0xFFFF6B35),
+                    decoration: TextDecoration.none,
                   ),
                   textAlign: TextAlign.center,
                 ),
@@ -307,6 +375,7 @@ class _CameraWidgetState extends State<CameraWidget> {
                     fontWeight: FontWeight.w500,
                     color: Color(0xFF666666),
                     fontStyle: FontStyle.italic,
+                    decoration: TextDecoration.none,
                   ),
                   textAlign: TextAlign.center,
                 ),
@@ -325,6 +394,7 @@ class _CameraWidgetState extends State<CameraWidget> {
                       style: TextStyle(
                         fontSize: 11,
                         color: Colors.grey[500],
+                        decoration: TextDecoration.none,
                       ),
                     ),
                   ],
@@ -358,6 +428,7 @@ class _CameraWidgetState extends State<CameraWidget> {
                       : Colors.grey,
                   fontSize: 14,
                   fontWeight: FontWeight.w500,
+                  decoration: TextDecoration.none,
                 ),
               ),
             ],

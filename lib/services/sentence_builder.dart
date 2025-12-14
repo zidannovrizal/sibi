@@ -40,9 +40,15 @@ class SentenceBuilder {
       return currentPhrase;
     }
 
-    // Jika sudah penuh, mulai kalimat baru.
+    // Jika sudah penuh, buang kata paling awal (sliding window) agar urutan tetap logis.
     if (_words.length >= maxWords) {
-      _words.clear();
+      _words.removeAt(0);
+    }
+
+    // Jika kata sudah pernah muncul, pindahkan ke posisi paling akhir agar urutan terbaru lebih relevan.
+    final existingIndex = _words.indexOf(word);
+    if (existingIndex != -1) {
+      _words.removeAt(existingIndex);
     }
 
     _words.add(word);

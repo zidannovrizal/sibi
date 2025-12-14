@@ -9,9 +9,12 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
+  google_nav_bar: ^5.0.7
   camera: ^0.11.3
   permission_handler: ^11.3.1
   provider: ^6.1.2
+  shared_preferences: ^2.2.3
+  flutter_dotenv: ^5.1.0
   image: ^4.1.7
   cupertino_icons: ^1.0.2
   # HTTP client for Python server communication
@@ -25,6 +28,7 @@ dependencies:
   movenet_hands_bridge:
     path: ../movenet_hands_bridge
   json_annotation: ^4.9.0
+  web_socket_channel: ^2.4.0
 
 dev_dependencies:
   flutter_test:
@@ -33,8 +37,6 @@ dev_dependencies:
 
 flutter:
   uses-material-design: true
-  # assets:
-  #   - assets/models/
   assets:
     - assets/currently_use/sibi_compact_mlp.tflite
     - assets/currently_use/sibi_compact_labels.json
@@ -42,3 +44,14 @@ flutter:
     - assets/currently_use/movenet_thunder.tflite
     - assets/currently_use/movenet_thunder_float3.tflite
     - assets/currently_use/hand_landmarker.task
+    - assets/images/
+  fonts:
+    - family: Poppins
+      fonts:
+        - asset: assets/fonts/Poppins-Regular.ttf
+        - asset: assets/fonts/Poppins-Medium.ttf
+          weight: 500
+        - asset: assets/fonts/Poppins-SemiBold.ttf
+          weight: 600
+        - asset: assets/fonts/Poppins-Bold.ttf
+          weight: 700

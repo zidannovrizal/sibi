@@ -1,12 +1,16 @@
 import 'dart:async';
 import 'dart:convert';
+
 import 'package:camera/camera.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:movenet_hands_bridge/movenet_hands_bridge.dart';
 import 'package:permission_handler/permission_handler.dart';
+import 'package:web_socket_channel/io.dart';
+import 'package:web_socket_channel/web_socket_channel.dart';
 
 import '../services/compact_feature_builder.dart';
+import '../services/gpt_sentence_service.dart';
 import '../services/sentence_builder.dart';
 import '../services/tflite_inference_service.dart';
 import '../services/tflite_model_feature_service.dart';
@@ -33,6 +37,12 @@ class CameraProvider extends ChangeNotifier {
 
   bool _isProcessingFrame = false;
   DateTime? _lastFrameAt;
+  bool _useRemoteServer = false;
+  bool _isRecordingSegment = false;
+  WebSocketChannel? _wsChannel;
+  StreamSubscription? _wsSubscription;
+  String _lastServerUrl = '';
+  bool _defaultCameraSelected = false;
 
   final TfliteModelFeatureTester _modelFeatureTester =
       TfliteModelFeatureTester();
@@ -51,6 +61,8 @@ class CameraProvider extends ChangeNotifier {
     timeout: const Duration(seconds: 3),
     minConfidence: 0.10,
   );
+  final GptSentenceService _gptService = GptSentenceService.instance;
+  bool _isRewriting = false;
 
   // Samakan dengan window ~1.4s @ ~16-20 fps input (≈60 ms per frame)
   static const Duration _minFrameInterval = Duration(milliseconds: 60);
@@ -67,6 +79,7 @@ class CameraProvider extends ChangeNotifier {
   Map<String, double> get handPosition => _handPosition;
   Map<String, double> get handBox => _handBox;
   bool get isHandDetected => _isHandDetected;
+  bool get useRemote => _useRemoteServer;
   bool get isModelFeatureTesterLoading => _isModelFeatureTesterLoading;
   bool get isModelFeatureTesterReady => _isModelFeatureTesterReady;
   String? get modelFeatureTesterError => _modelFeatureTesterError;
@@ -161,11 +174,20 @@ class CameraProvider extends ChangeNotifier {
     }
   }
 
-  Future<void> initializeCamera() async {
+  Future<void> initializeCamera({bool keepCurrentIndex = false}) async {
     try {
-      final status = await Permission.camera.request();
-      if (status != PermissionStatus.granted) {
+      final statusCamera = await Permission.camera.request();
+      if (statusCamera != PermissionStatus.granted) {
         throw Exception('Camera permission not granted');
+      }
+
+      // Microphone permission diperlukan oleh plugin kamera ketika melakukan
+      // perekaman video (meskipun enableAudio=false). Jika tidak diberikan,
+      // startVideoRecording dapat melempar SecurityException.
+      final statusMic = await Permission.microphone.request();
+      if (statusMic != PermissionStatus.granted) {
+        debugPrint(
+            'Microphone permission not granted; remote video capture may fail.');
       }
 
       _cameras = await availableCameras();
@@ -175,12 +197,13 @@ class CameraProvider extends ChangeNotifier {
 
       await _controller?.dispose();
 
-      final int frontIndex = _cameras.indexWhere(
-        (camera) => camera.lensDirection == CameraLensDirection.front,
-      );
-      _currentCameraIndex = frontIndex != -1
-          ? frontIndex
-          : _currentCameraIndex.clamp(0, _cameras.length - 1);
+      if (!_defaultCameraSelected || !keepCurrentIndex || _currentCameraIndex >= _cameras.length) {
+        final int frontIndex = _cameras.indexWhere(
+          (camera) => camera.lensDirection == CameraLensDirection.front,
+        );
+        _currentCameraIndex = frontIndex != -1 ? frontIndex : 0;
+        _defaultCameraSelected = true;
+      }
 
       _controller = CameraController(
         _cameras[_currentCameraIndex],
@@ -202,6 +225,9 @@ class CameraProvider extends ChangeNotifier {
   }
 
   Future<void> startCamera() async {
+    // Hard reset setiap masuk kamera untuk menghindari state tersisa.
+    await stopCamera(preserveMode: false);
+    await initializeCamera(keepCurrentIndex: true);
     if (_controller == null || !_isInitialized) {
       debugPrint('Camera not ready to start.');
       return;
@@ -227,12 +253,23 @@ class CameraProvider extends ChangeNotifier {
     }
   }
 
-  Future<void> stopCamera() async {
-    if (_controller == null || !_isCameraActive) return;
+  Future<void> stopCamera({bool preserveMode = false, bool disconnectWs = true}) async {
+    if (_controller == null || !_isCameraActive) {
+      if (disconnectWs) {
+        await _disconnectRemoteServer();
+      }
+      return;
+    }
+    final bool wasRemote = _useRemoteServer;
 
     try {
       if (_controller!.value.isStreamingImages) {
         await _controller!.stopImageStream();
+      }
+      if (_controller!.value.isRecordingVideo) {
+        try {
+          await _controller!.stopVideoRecording();
+        } catch (_) {}
       }
       try {
         await _controller!.setFlashMode(FlashMode.off);
@@ -244,6 +281,11 @@ class CameraProvider extends ChangeNotifier {
       _isFlashOn = false;
       _isProcessingFrame = false;
       _lastFrameAt = null;
+      _useRemoteServer = preserveMode ? wasRemote : false;
+      _isRecordingSegment = false;
+      if (disconnectWs) {
+        await _disconnectRemoteServer();
+      }
       TfliteInferenceService.reset();
       _sentenceBuilder.reset();
       _setWaitingState('Kamera dihentikan');
@@ -258,33 +300,31 @@ class CameraProvider extends ChangeNotifier {
     }
 
     final bool wasActive = _isCameraActive;
+    final bool wasRemote = _useRemoteServer;
+    final String serverUrl = _lastServerUrl;
 
-    await stopCamera();
+    // Putuskan koneksi WS agar saat switch dibuat koneksi baru yang bersih.
+    await stopCamera(preserveMode: false, disconnectWs: true);
     await _controller?.dispose();
 
     _currentCameraIndex = (_currentCameraIndex + 1) % _cameras.length;
     _isInitialized = false;
     _isFlashOn = false;
 
-    _controller = CameraController(
-      _cameras[_currentCameraIndex],
-      _cameraResolution,
-      enableAudio: false,
-      imageFormatGroup: ImageFormatGroup.yuv420,
-    );
+    await initializeCamera(keepCurrentIndex: true);
+    await _prepareForRecording();
+    _isRecordingSegment = false;
+    notifyListeners();
 
-    try {
-      await _controller!.initialize();
-      _isInitialized = true;
-      notifyListeners();
-
-      if (wasActive) {
+    if (wasActive) {
+      if (wasRemote && serverUrl.trim().isNotEmpty) {
+        final started = await startRemoteCamera(serverUrl);
+        if (!started) {
+          await startCamera();
+        }
+      } else {
         await startCamera();
       }
-    } catch (e) {
-      debugPrint('Failed to switch camera: $e');
-      _isInitialized = false;
-      notifyListeners();
     }
   }
 
@@ -308,6 +348,50 @@ class CameraProvider extends ChangeNotifier {
       debugPrint('Failed to toggle flash: $e');
       _isFlashOn = false;
       notifyListeners();
+    }
+  }
+
+  Future<void> _prepareForRecording() async {
+    if (_controller == null) return;
+    try {
+      await _controller!.prepareForVideoRecording();
+    } catch (_) {}
+    // Beri sedikit waktu agar sensor benar-benar siap sebelum perekaman pertama.
+    await Future.delayed(const Duration(milliseconds: 150));
+  }
+
+  Future<bool> startRemoteCamera(String serverUrl) async {
+    final String trimmed = serverUrl.trim();
+    if (trimmed.isEmpty) {
+      debugPrint('Remote server URL is empty.');
+      return false;
+    }
+
+    try {
+      if (_isCameraActive) {
+        await stopCamera(preserveMode: false, disconnectWs: true);
+      } else {
+        await _disconnectRemoteServer();
+      }
+      await initializeCamera(keepCurrentIndex: true);
+      _lastServerUrl = trimmed;
+      final connected = await _connectRemoteServer(trimmed);
+      if (!connected) {
+        return false;
+      }
+      await _prepareForRecording();
+      _useRemoteServer = true;
+      _isCameraActive = true;
+      _isRecordingSegment = false;
+      _setWaitingState('Mengumpulkan data dari server...');
+      notifyListeners();
+      await Future.delayed(const Duration(milliseconds: 400));
+      _startSegmentLoop();
+      return true;
+    } catch (e) {
+      debugPrint('Failed to start remote camera: $e');
+      _useRemoteServer = false;
+      return false;
     }
   }
 
@@ -482,6 +566,7 @@ class CameraProvider extends ChangeNotifier {
       // Bangun kalimat sederhana dari kata-kata yang terdeteksi.
       final String phrase = _sentenceBuilder.addWord(label, confidence);
       _recognizedText = phrase.isNotEmpty ? phrase : label;
+      unawaited(_maybeRewrite(_recognizedText));
     }
 
     _gestureType = normalized.replaceAll(' ', '_');
@@ -526,6 +611,188 @@ class CameraProvider extends ChangeNotifier {
       if (v != 0.0) return true;
     }
     return false;
+  }
+
+  Future<bool> _connectRemoteServer(String url) async {
+    await _wsSubscription?.cancel();
+    _wsSubscription = null;
+    await _wsChannel?.sink.close();
+    _wsChannel = null;
+
+    try {
+      final uri = Uri.parse(url.trim());
+      _wsChannel = IOWebSocketChannel.connect(uri);
+      _wsSubscription = _wsChannel!.stream.listen(
+        _handleServerMessage,
+        onError: (error) {
+          debugPrint('Remote server error: $error');
+        },
+        onDone: () {
+          debugPrint('Remote server connection closed.');
+        },
+      );
+      return true;
+    } catch (e) {
+      debugPrint('Failed to connect remote server: $e');
+      return false;
+    }
+  }
+
+  Future<void> _disconnectRemoteServer() async {
+    try {
+      await _wsSubscription?.cancel();
+    } catch (_) {}
+    _wsSubscription = null;
+    try {
+      await _wsChannel?.sink.close();
+    } catch (_) {}
+    _wsChannel = null;
+  }
+
+  void _startSegmentLoop() {
+    if (_controller == null) return;
+    if (_isRecordingSegment) return;
+    _isRecordingSegment = true;
+    int emptyStreak = 0;
+
+    () async {
+      debugPrint('#remote segment loop started');
+      while (_isCameraActive && _useRemoteServer && _wsChannel != null) {
+        try {
+          if (_controller == null || !_controller!.value.isInitialized) {
+            debugPrint('#remote controller not ready, break loop');
+            break;
+          }
+          if (_controller!.value.isRecordingVideo) {
+            try {
+              await _controller!.stopVideoRecording();
+            } catch (_) {}
+          }
+          // Jika habis switch, beri sedikit jeda supaya kamera siap
+          await Future.delayed(const Duration(milliseconds: 250));
+          await _prepareForRecording();
+          debugPrint('#remote start video recording');
+          await _controller!.startVideoRecording();
+          await Future.delayed(const Duration(milliseconds: 1600));
+          final XFile file = await _controller!.stopVideoRecording();
+          debugPrint('#remote segment captured: ${file.path}');
+          final bytes = await file.readAsBytes();
+          if (bytes.isEmpty) {
+            debugPrint('#remote empty segment, skip send');
+            emptyStreak += 1;
+            final delayMs = 300 + (emptyStreak * 120);
+            await Future.delayed(Duration(milliseconds: delayMs.clamp(300, 900)));
+            continue;
+          }
+          emptyStreak = 0;
+          final String b64 = base64Encode(bytes);
+          final payload = json.encode(
+            {
+              'type': 'segment',
+              'data': b64,
+              'format': 'mp4',
+            },
+          );
+          debugPrint('#remote send segment bytes=${bytes.length}');
+          _wsChannel?.sink.add(payload);
+        } catch (e) {
+          debugPrint('Error recording/sending segment: $e');
+          await Future.delayed(const Duration(milliseconds: 400));
+          // coba lanjut; jika kondisi tidak terpenuhi loop akan berhenti otomatis
+        }
+      }
+      debugPrint('#remote segment loop stopped');
+      _isRecordingSegment = false;
+      // Jika masih dalam mode remote dan koneksi ada, coba restart loop.
+      if (_isCameraActive && _useRemoteServer && _wsChannel != null) {
+        Future.microtask(_startSegmentLoop);
+      }
+    }();
+  }
+
+  void _handleServerMessage(dynamic message) {
+    try {
+      final Map<String, dynamic> decoded =
+          json.decode(message.toString()) as Map<String, dynamic>;
+      debugPrint('#remote msg: $decoded');
+      final String type = decoded['type']?.toString() ?? '';
+      if (type == 'hello') {
+        debugPrint('#remote hello: $decoded');
+        return;
+      }
+      if (type != 'result') {
+        return;
+      }
+
+      final String status = decoded['status']?.toString() ?? '';
+      final String label = decoded['label']?.toString() ?? '';
+      final double confidence =
+          (decoded['confidence'] ?? 0.0 as double).toDouble();
+
+      if (status == 'no_gesture' || status == 'low_confidence') {
+        _setWaitingState('Mengumpulkan data...');
+        notifyListeners();
+        return;
+      }
+
+      if (status == 'blank') {
+        _sentenceBuilder.reset();
+        final String sentence = decoded['sentence']?.toString() ?? '';
+        _recognizedText =
+            sentence.isNotEmpty ? sentence : (label.isNotEmpty ? label : '');
+        _gestureType = label.toLowerCase().trim();
+        _confidence = confidence;
+        _isHandDetected = false;
+        notifyListeners();
+        return;
+      }
+
+      _isHandDetected = true;
+      _confidence = confidence;
+      final String normalized = label.toLowerCase().trim();
+      if (normalized == _blankLabel) {
+        _sentenceBuilder.reset();
+        _recognizedText = label;
+      } else {
+        final String phrase = _sentenceBuilder.addWord(label, confidence);
+        _recognizedText = phrase.isNotEmpty ? phrase : label;
+      }
+
+      _gestureType = normalized.replaceAll(' ', '_');
+      _handPosition = {'x': 0.5, 'y': 0.5};
+      _handBox = {
+        'left': 0.3,
+        'top': 0.18,
+        'width': 0.4,
+        'height': 0.55,
+      };
+      if (normalized != _blankLabel && _recognizedText.isNotEmpty) {
+        unawaited(_maybeRewrite(_recognizedText));
+      }
+      notifyListeners();
+    } catch (e) {
+      debugPrint('Failed to handle server message: $e');
+    }
+  }
+
+  Future<void> _maybeRewrite(String text) async {
+    if (!_useRemoteServer) return; // hanya gunakan GPT ketika mode online
+    final cleaned = text.trim();
+    if (cleaned.isEmpty || cleaned.toLowerCase() == _blankLabel) return;
+    if (_isRewriting) return;
+    _isRewriting = true;
+    try {
+      final rewritten = await _gptService.rewrite(cleaned);
+      final trimmed = rewritten.trim();
+      if (trimmed.isNotEmpty && trimmed != _recognizedText) {
+        _recognizedText = trimmed;
+        notifyListeners();
+      }
+    } catch (e) {
+      debugPrint('GPT rewrite failed: $e');
+    } finally {
+      _isRewriting = false;
+    }
   }
 
   @override

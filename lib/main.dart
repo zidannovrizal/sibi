@@ -1,9 +1,19 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:provider/provider.dart';
-import 'screens/home_screen.dart';
 import 'providers/camera_provider.dart';
+import 'providers/server_config_provider.dart';
+import 'providers/theme_provider.dart';
+import 'screens/home_screen.dart';
+import 'screens/onboarding_screen.dart';
 
-void main() {
+Future<void> main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  try {
+    await dotenv.load(fileName: ".env");
+  } catch (_) {
+    // Jika .env tidak tersedia, lanjutkan tanpa menahan startup.
+  }
   runApp(const BimaApp());
 }
 
@@ -13,75 +23,61 @@ class BimaApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MultiProvider(
-      providers: [ChangeNotifierProvider(create: (_) => CameraProvider())],
-      child: MaterialApp(
-        title: 'Bima - Bahasa Isyarat SIBI',
-        theme: ThemeData(
-          colorScheme: ColorScheme.fromSeed(
-            seedColor: const Color(0xFFFF6B35), // Changed to orange
-            brightness: Brightness.light,
-          ),
-          useMaterial3: true,
-          fontFamily: 'Poppins',
-          // Modern app bar theme
-          appBarTheme: const AppBarTheme(
-            backgroundColor: Color(0xFFFF6B35), // Changed to orange
-            foregroundColor: Colors.white,
-            elevation: 0,
-            centerTitle: true,
-            titleTextStyle: TextStyle(
-              fontSize: 20,
-              fontWeight: FontWeight.w700,
-              letterSpacing: 0.5,
-            ),
-          ),
-          // Modern card theme
-          cardTheme: CardThemeData(
-            elevation: 8,
-            shadowColor:
-                const Color(0xFFFF6B35).withOpacity(0.2), // Changed to orange
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(20),
-            ),
-          ),
-          // Modern elevated button theme
-          elevatedButtonTheme: ElevatedButtonThemeData(
-            style: ElevatedButton.styleFrom(
-              backgroundColor: const Color(0xFFFF6B35), // Changed to orange
-              foregroundColor: Colors.white,
-              elevation: 4,
-              shadowColor:
-                  const Color(0xFFFF6B35).withOpacity(0.3), // Changed to orange
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(16),
+      providers: [
+        ChangeNotifierProvider(create: (_) => CameraProvider()),
+        ChangeNotifierProvider(create: (_) => ServerConfigProvider()),
+        ChangeNotifierProvider(create: (_) => ThemeProvider()),
+      ],
+      child: Consumer<ThemeProvider>(
+        builder: (context, themeProv, _) {
+          final seed = const Color(0xFFFF6B35);
+          return MaterialApp(
+            title: 'Tangan Nusantara - Bahasa Isyarat SIBI',
+            themeMode: themeProv.isDark ? ThemeMode.dark : ThemeMode.light,
+            theme: ThemeData(
+              colorScheme: ColorScheme.fromSeed(
+                seedColor: seed,
+                brightness: Brightness.light,
               ),
-              padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
-              textStyle: const TextStyle(
-                fontSize: 16,
-                fontWeight: FontWeight.w600,
-                letterSpacing: 0.5,
+              useMaterial3: true,
+              fontFamily: 'Poppins',
+              appBarTheme: const AppBarTheme(
+                backgroundColor: Color(0xFFFF6B35),
+                foregroundColor: Colors.white,
+                elevation: 0,
+                centerTitle: true,
+              ),
+              bottomNavigationBarTheme: const BottomNavigationBarThemeData(
+                backgroundColor: Colors.white,
+                selectedItemColor: Color(0xFFFF6B35),
+                unselectedItemColor: Color(0xFF9E9E9E),
+                type: BottomNavigationBarType.fixed,
+                elevation: 12,
               ),
             ),
-          ),
-          // Modern bottom navigation bar theme
-          bottomNavigationBarTheme: const BottomNavigationBarThemeData(
-            backgroundColor: Colors.white,
-            selectedItemColor: Color(0xFFFF6B35), // Changed to orange
-            unselectedItemColor: Color(0xFF9E9E9E),
-            type: BottomNavigationBarType.fixed,
-            elevation: 20,
-            selectedLabelStyle: TextStyle(
-              fontWeight: FontWeight.w600,
-              fontSize: 12,
+            darkTheme: ThemeData(
+              colorScheme: ColorScheme.fromSeed(
+                seedColor: seed,
+                brightness: Brightness.dark,
+              ),
+              useMaterial3: true,
+              fontFamily: 'Poppins',
+              appBarTheme: AppBarTheme(
+                backgroundColor: seed,
+                foregroundColor: Colors.white,
+                elevation: 0,
+                centerTitle: true,
+              ),
             ),
-            unselectedLabelStyle: TextStyle(
-              fontWeight: FontWeight.w500,
-              fontSize: 12,
-            ),
-          ),
-        ),
-        home: const HomeScreen(),
-        debugShowCheckedModeBanner: false,
+            home: const OnboardingScreen(),
+            routes: {
+              '/home': (_) => const HomeScreen(),
+              '/vocabulary': (_) => const HomeScreen(initialIndex: 1),
+              '/settings': (_) => const HomeScreen(initialIndex: 2),
+            },
+            debugShowCheckedModeBanner: false,
+          );
+        },
       ),
     );
   }

@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 import '../../providers/server_config_provider.dart';
 import '../../theme/app_colors.dart';
 import '../../widgets/camera_widget.dart';
+import '../../widgets/camera_widget_horizontal.dart';
 
 class HomeTab extends StatelessWidget {
   final ValueChanged<int> onNavigate;
@@ -155,7 +156,8 @@ class HomeTab extends StatelessWidget {
                           Navigator.push(
                             context,
                             MaterialPageRoute(
-                              builder: (context) => const CameraWidget(),
+                              builder: (context) =>
+                                  const CameraWidgetHorizontal(),
                             ),
                           );
                         }
